@@ -1,0 +1,70 @@
+---
+title: "Homework 1"
+author: "Stat-S 432"
+date: "Due 18 January 2018"
+output:
+  pdf_document:
+    includes:
+      in_header: ../support/432macros.tex
+    number_sections: no
+    template: ../support/dm-docs.tex
+    toc: no
+  html_document:
+    theme: flatly
+---
+
+## 1. Functions.
+
+There are two functions below which are missing some or all of the body. The first one should generate data from a linear model. The second
+should estimate a linear model using an input dataframe and then make some plots to examine the fit.
+
+Complete both functions.
+
+```{r functions}
+generate.data <- function(n){
+  X = matrix(rnorm(2*n), n, 2)
+  epsilon = rnorm(n)
+  beta = runif(3, -1, 1) 
+  y = # how would you generate y from a linear model?
+  df = data.frame(y=y, X1 = X[,1], X2 = X[,2])
+  return(df)
+}
+
+estimate.and.plot <- function(dataframe, ...){
+  mdl = lm(y~X1+X2, data=dataframe)
+  resids = # how do you get residuals?
+  fit =  # how do you get the fitted values?
+  par(mfrow=c(2,2))
+  with(dataframe, { ## Answer a question below about this line
+    plot(y~fit, las=1, pch=19,...)
+    plot(resids~X1, las=1, pch=19,...)
+    plot(resids~X2, las=1, pch=19,...)
+    })
+  qqnorm(resids, pch=19, bty='n',las=1)
+  qqline(resids)
+  return(mdl)
+}
+```
+
+## 2. Function execution.
+
+* Generate some data with the first function. 
+* Estimate the model with the second function. And produce the plots.
+* Create a table which shows the coefficients, their standard errors, and p-values. You must use the `knitr::kable` function to do this. Print only 3 significant digits. Hint: there is a way to extract all of this information easily from the `lm` output. 
+
+## 3. Engage.
+
+![](http://s2.quickmeme.com/img/81/814ae8ec080ce5c6bbd2142f9dfdc425386c52e389cf400169386df7a73b1570.jpg) 
+
+You will now attempt to re-engage last semester’s brain cells by doing things you should already know how to do in possibly new ways. Consider the "properties.txt" dataset from HW 9 and 10 (optional) in S431. Recall that it has an outcome (rental rates) and four predictors (age, operating expenses + taxes, vacancy rates, square footage). The goal is to predict rental rates using these four variables.
+
+1. Use the `lm` function to estimate the linear model of rental rates on all four predictors. Produce a table summarizing the output. 
+
+2. Make plots of the residuals against each predictor. Make a qq-plot of the residuals. Discuss what you see. Does the assumption of "normally distributed residuals" appear to be satisfied?
+
+3. Interpret the estimated coefficient on vacancy rates. Find and interpret a 90% confidence interval for $\beta_{vacancy}$. Test, with $\alpha=0.05$, whether or not $\beta_{vacancy}=0$. State your conclusion in the context of the problem.
+
+4. Someone suggests including an interaction for age and vacancy rates. Add this interaction to the model reinterpret the effect of vacancy rates on rental rates.
+
+5. Someone suggests that it would be better to use the log of rental rates as the outcome. Repeat steps 1 to 3 with this change.
+
