@@ -3,14 +3,14 @@ title: "Homework 1 - Solution"
 author: 'DJM'
 date: "Due 18 January 2018"
 output: 
+  html_document:
+    theme: flatly
   pdf_document:
     includes:
       in_header: ../support/432macros.tex
     number_sections: no
     template: ../support/dm-docs.tex
     toc: no
-  html_document:
-    theme: flatly
 ---
 
 ```{r setup, include=FALSE}
@@ -149,12 +149,24 @@ prop.lin.mod.interaction = lm(rent.rates~.+age*vac.rates, data=properties)
 ```
 
 ***
-With the addition of the interaction, we a change in vacancy rates will affect predicted rental rates through two sources: it's own marginal contribution and the interacted contribution with age. Holding age constant (non-zero), therefore, we have
+With the addition of the interaction, a change in vacancy rates will affect predicted rental rates through two sources: it's own marginal contribution and the interacted contribution with age. Holding age constant (non-zero), therefore, we have
 \[
-\Delta \widehat{\mbox{rent.rates}} = \widehat{\beta}_{\mbox{vac.rates}} + \widehat{\beta}_{\mbox{vac.rates}\times\mbox{age}} .
+\Delta \widehat{\mbox{rent.rates}} = \widehat{\beta}_{\mbox{vac.rates}} + \widehat{\beta}_{\mbox{vac.rates}\times\mbox{age}}\times \mbox{age} .
 \]
-So, in this case, for every 1% increase in vacancy rate, predicted rental rates increase by $`r coef(prop.lin.mod.interaction)['vac.rates']` + $`r coef(prop.lin.mod.interaction)['age:vac.rates']` = $`r coef(prop.lin.mod.interaction)['vac.rates']+coef(prop.lin.mod.interaction)['age:vac.rates']`
+So, in this case, for every 1% increase in vacancy rate, predicted rental rates increase by something that *depends on the value of age*. This is seen most easily by examining the partial derivative
+\[
+\frac{\partial \widehat{y}} {\partial \mbox{vac.rates}} = \widehat{\beta}_{\mbox{vac.rates}} + \widehat{\beta}_{\mbox{vac.rates}\times\mbox{age}}\times \mbox{age}.
+\]
+This is a *function* of age (a linear one). So we could plot it.
+```{r interaction-plot}
+int.df = data.frame(age=properties$age, 
+                    preds = coef(prop.lin.mod.interaction)['vac.rates'] + 
+                      properties$age*coef(prop.lin.mod.interaction)['age:vac.rates'])
+ggplot(int.df, aes(x=age,y=preds)) + geom_point() +
+  ylab('chg in predicted rent rate\n for 1% chg in vac rate')
+```
 
+Each point on this line gives the change in predicted rental rate for 1% change in vacancy rate (holding everything else constant).
 
 5. Someone suggests that it would be better to use the log of rental rates as the outcome. Repeat steps 1 to 3 with this change.
 
