@@ -34,5 +34,5 @@ cache/
 *.knit.md
 .Rproj.user
 
-hw1sol*
+hw1sol
 hw2sol*

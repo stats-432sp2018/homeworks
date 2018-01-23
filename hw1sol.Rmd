@@ -1,0 +1,180 @@
+---
+title: "Homework 1 - Solution"
+author: 'DJM'
+date: "Due 18 January 2018"
+output: 
+  pdf_document:
+    includes:
+      in_header: ../support/432macros.tex
+    number_sections: no
+    template: ../support/dm-docs.tex
+    toc: no
+  html_document:
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+# General set-up for the report.
+# I find this useful, but you may improve upon, ignore, or remove
+#  (possibly at your own peril).
+# Tasks accomplished:
+# Don't print out code
+# Save results so that code blocks aren't re-run unless code
+# changes (cache), _or_ a relevant earlier code block changed (autodep),
+# don't clutter R output with messages or warnings (message, warning)
+library(knitr)
+opts_chunk$set(echo=TRUE,
+               cache=TRUE, autodep=TRUE,
+               message=FALSE, warning=FALSE)
+# Turn off meaningless clutter in summary() output
+options(scipen = 1, digits = 2)
+```
+
+```{r geom_qq, echo=FALSE}
+library(tidyverse)
+## For some reason, ggplot doesn't like to draw the line
+## the way that `qqline` does. Here's a function that helps.
+## Running this will load one
+source('https://raw.githubusercontent.com/tidyverse/ggplot2/master/R/stat-qq-line.R')
+```
+
+## 1. Functions.
+
+
+```{r functions, echo=TRUE}
+generate.data <- function(n, p, sig.epsilon=1){
+  ## This function takes 3 inputs (2 mandatory, 1 optional)
+  ## n - the number of observations
+  ## p - the number of predictors
+  ## sig.epsilon - (optional) the sd of the normal noise (default=1 if omitted)
+  X = matrix(rnorm(p*n), ncol=p) ## a matrix of standard normal RVs (n x p)
+  epsilon = rnorm(n, sd = sig.epsilon) ## noise ~ N(0, sig.epsilon)
+  beta = p:1 # p beta coefficients
+  beta.0 = 3 # an intercept
+  y = beta.0 + X %*% beta + epsilon # the linear model
+  df = data.frame(y, X) # put it all in a data frame
+  return(df) # output
+}
+
+estimate.and.plot <- function(form, dataframe, plotme = TRUE){
+  ## Estimates and (optionally plots some diagnostics for) a linear model
+  ## Takes in a formula and data frame
+  ## plotme determines whether plots are generated
+  mdl = lm(form, data=dataframe) # estimates the model on all predictors
+    # assumes the response is named 'y'
+  if(plotme){ # do we produce plots?
+    preds = labels(terms(form, data=dataframe))
+    df = dataframe[preds]
+    df$resids = residuals(mdl) # how do you get residuals?
+    df$fit = fitted(mdl) # how do you get the fitted values?
+    preds.vs.resids = df %>% 
+      gather(-c(resids,fit), key='predictor', value='value')
+    # create a new dataframe for ggplot
+    # this concatenates all the predictors into a long vector called 'value'
+    # it makes another long vector (a factor) naming the predictors ('predictor')
+    # it then replicates resids and fit as two more columns with appropriate
+    # length
+    p1 <- ggplot(preds.vs.resids, aes(x=value, y=resids)) + geom_point() +
+      geom_smooth() + facet_wrap(~predictor, scales = 'free') 
+      # plot residuals against predictors
+      # 1 facet for each predictor, and add a smooth
+      # (the scales='free' stuff lets the axis vary
+    p2 <- ggplot(df, aes(sample=resids)) + geom_qq() + geom_qq_line()
+    # qq plot of the residuals to assess normality
+    print(p1) # print out the first plot (wouldn't do this inside a function generally)
+    print(p2) # print out the second plot
+  }
+  return(mdl) # output our fitted model
+}
+```
+
+## 2. Function execution.
+
+* Generate some data with the first function. Use 4 predictors (you can choose $n$ and the noise SD yourself). 
+```{r generate-data}
+df = generate.data(250, 4)
+```
+
+* Estimate the model with the second function. And produce the plots.
+```{r estimate-and-plot, fig.align='center'}
+mdl = estimate.and.plot(formula('y~.'), df)
+```
+
+* Create a table which shows the coefficients, their standard errors, and p-values. You must use the `knitr::kable` function to do this. Print only 2 significant digits. Hint: there is a way to extract all of this information easily from the `lm` output; you can do this in 1 line. 
+```{r coef-summary}
+knitr::kable(summary(mdl)$coef, digits = 2)
+```
+
+
+## 3. Engage.
+
+![](http://s2.quickmeme.com/img/81/814ae8ec080ce5c6bbd2142f9dfdc425386c52e389cf400169386df7a73b1570.jpg) 
+
+You will now attempt to re-engage last semester’s brain cells by doing things you should already know how to do in possibly new ways. Consider the "properties.txt" dataset from HW 9 and 10 (optional) in S431 (described in exercise 6.18 of that text). Recall that it has an outcome (rental rates) and four predictors (age, operating expenses + taxes, vacancy rates, square footage). The goal is to predict rental rates using these four variables.
+
+```{r load-properties, echo=FALSE}
+properties = read.table('http://www.stat.ufl.edu/~rrandles/sta4210/Rclassnotes/data/textdatasets/KutnerData/Chapter%20%206%20Data%20Sets/CH06PR18.txt')
+names(properties) = c('rent.rates','age','op.expense','vac.rates','sqft')
+```
+
+1. Use the `lm` function to estimate the linear model of rental rates on all four predictors. Produce a table summarizing the output. 
+
+```{r execute-1}
+form1 = formula('rent.rates~.')
+prop.lin.mod = lm(form1, data=properties)
+knitr::kable(summary(prop.lin.mod)$coef,digits = 2)
+```
+
+2. Make plots of the residuals against each predictor. Make a qq-plot of the residuals. Discuss what you see. Does the assumption of "normally distributed residuals" appear to be satisfied?
+
+***
+```{r execute-2}
+prop.lin.mod = estimate.and.plot(form1, properties) #same as before
+```
+
+The normality assumption seems a bit inaccurate especially at the tails. The residuals are generally centered around zero against each of the predictors without too much trend. Vacancy rates as a few large outliers that we should perhaps worry about, and age is either small or large without much data in the 5-10 year range.
+
+3. Interpret the estimated coefficient on vacancy rates. Find and interpret a 90% confidence interval for $\beta_{vacancy}$. Test, with $\alpha=0.05$, whether or not $\beta_{vacancy}=0$. State your conclusion in the context of the problem.
+
+***
+The coefficient on vacancy rates is `r coef(prop.lin.mod)['vac.rates']`. This means that for every 1% increase in vacancy rate, predicted rental rates increase by $`r coef(prop.lin.mod)['vac.rates']`. (I'm assuming here that vacancy rates are in decimals not percentage and that rental rates are in units of $100. Note that the range of vacancy rates is `r range(properties$vac.rates)`.) 
+
+The predicted increase is fairly unexpected, but the p-value is only `r summary(prop.lin.mod)$coef['vac.rates',4]` and the 90% confidence interval is `r confint(prop.lin.mod, level = .9)['vac.rates',]`. This is not a significant predictor. (It's most likely driven by the skewness of the distribution: there are a few large outliers which coincide with increased rental rates. Perhaps expensive new construction?)
+
+
+4. Someone suggests including an interaction for age and vacancy rates. Add this interaction to the model reinterpret the effect of vacancy rates on rental rates.
+
+```{r execute-4}
+prop.lin.mod.interaction = lm(rent.rates~.+age*vac.rates, data=properties)
+```
+
+***
+With the addition of the interaction, we a change in vacancy rates will affect predicted rental rates through two sources: it's own marginal contribution and the interacted contribution with age. Holding age constant (non-zero), therefore, we have
+\[
+\Delta \widehat{\mbox{rent.rates}} = \widehat{\beta}_{\mbox{vac.rates}} + \widehat{\beta}_{\mbox{vac.rates}\times\mbox{age}} .
+\]
+So, in this case, for every 1% increase in vacancy rate, predicted rental rates increase by $`r coef(prop.lin.mod.interaction)['vac.rates']` + $`r coef(prop.lin.mod.interaction)['age:vac.rates']` = $`r coef(prop.lin.mod.interaction)['vac.rates']+coef(prop.lin.mod.interaction)['age:vac.rates']`
+
+
+5. Someone suggests that it would be better to use the log of rental rates as the outcome. Repeat steps 1 to 3 with this change.
+
+***
+```{r execute-5}
+form2 = formula('log(rent.rates)~.')
+prop.log.lin.mod = estimate.and.plot(form2, properties)
+knitr::kable(summary(prop.log.lin.mod)$coef,digits = 2)
+```
+
+The coefficient on vacancy rates is now `r coef(prop.log.lin.mod)['vac.rates']`. This means that for every 1% increase in vacancy rate, __log__ predicted rental rates increase by `r coef(prop.log.lin.mod)['vac.rates']`. There isn't much change in the diagnostic plots. This hasn't really fixed the departure from normality.
+
+It is not so easy to convert this to predicted rental rates because 
+\[
+\frac{\partial}{\partial x_j} \exp\left(\sum_{i=1}^p \widehat{\beta}_i x_i\right) = \widehat{\beta}_j \exp\left(\sum_{i=1}^p \widehat{\beta}_i x_i\right) \neq \exp\left(\widehat{\beta}_j\right).
+\]
+One way to convert is to hold all the predictors constant at their average values. Thus, we examine the effect of a 1% increase in vacancy rates from its average where everything else is also average (you could use any meaningful starting point that you like). So we predict at the average, exponentiate, and then multiply by the estimated coefficient:
+```{r log-scale-predict,echo=TRUE}
+avg.pred = predict(prop.log.lin.mod, newdata = summarise_all(properties, mean))
+chg.from.average = coef(prop.log.lin.mod)['vac.rates']*avg.pred
+```
+Now we have, that predicted rental rates increase (from average) by $`r chg.from.average` if vacancy rates increase by 1% from their average.
+The p-value is `r summary(prop.log.lin.mod)$coef['vac.rates',4]` and the 90% confidence interval is `r confint(prop.log.lin.mod, level = .9)['vac.rates',]`. Again, this is not a significant predictor.
