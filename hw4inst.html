@@ -120,13 +120,13 @@ $(document).ready(function () {
 
 <h1 class="title toc-ignore">Homework 4</h1>
 <h4 class="author"><em>Stat-S 432</em></h4>
-<h4 class="date"><em>Due 23 March 2017</em></h4>
+<h4 class="date"><em>Due BEFORE CLASS, 20 March 2017</em></h4>
 
 </div>
 
 
 <blockquote>
-<p><strong>Instructions:</strong> You must submit this homework by pushing the “hw4.Rmd” file to your team’s repo. Note that that is the <strong>only</strong> file you will be allowed to push. Commit early and often.</p>
+<p><strong>Instructions:</strong> You must submit this homework by pushing the “hw4.Rmd” file to your personal repo. To get your own repo, as with the midterm exam, you must click the link I posted in Slack. Completion of the assignment is worth up to 10 points extra credit depending on accuracy and completeness. Note that the assignment is due BEFORE CLASS on Tuesday, 20 March.</p>
 </blockquote>
 <div id="scenario" class="section level1">
 <h1>Scenario</h1>
@@ -155,9 +155,8 @@ $(document).ready(function () {
 </ul></li>
 <li>Does adding in year and country as covariates improve the predictive ability of a linear model which includes log GDP and under-valuation?
 <ul>
-<li>What are the <span class="math inline">\(R^2\)</span> and the adjusted <span class="math inline">\(R^2\)</span> of the two models?</li>
 <li>Use leave-one-out cross-validation to estimate the prediction risk mean squared of the two models. Which one actually predicts better, and by how much? <strong>Hint:</strong> Use the code from Chapter 3.</li>
-<li>Explain why using 5-fold cross-validation would be hard here. (You don’t need to do it.)</li>
+<li>Explain why using 5-fold cross-validation would be hard here. Don’t do it. <strong>Hint:</strong> this has something to do with including factors.</li>
 </ul></li>
 <li>For the best predicting model, use the bootstrap (see Chapter 6) to produce confidence intervals for log GDP and undervaluation. You should try to do both the <em>resample rows of the data</em> version and the <em>resample residuals</em> version (pp. 156-7). Can you do both? Why or why not? Compare the bootstrapped confidence intervals with the intervals you already presented. Do your conclusions change? Use <span class="math inline">\(B=250\)</span>.</li>
 </ul>
