@@ -1,0 +1,283 @@
+---
+title: "Homework 4 Solutions"
+author: "Solution"
+date: "23 March 2017"
+output:
+  html_document:
+    fig_caption: yes
+    theme: flatly
+  pdf_document:
+    fig_caption: yes
+    number_sections: yes
+---
+
+```{r, include=FALSE, results='hide'}
+# General set-up for the report:
+# Don't print out code
+# Save results so that code blocks aren't re-run unless code
+# changes (cache), _or_ a relevant earlier code block changed (autodep),
+# don't clutter R output with messages or warnings (message, warning)
+library(MASS)
+library(knitr)
+library(tidyverse)
+opts_chunk$set(echo=FALSE,
+               cache=TRUE, autodep=TRUE,
+               message=FALSE, warning=FALSE)
+# Turn off meaningless clutter in summary() output
+options(show.signif.stars=FALSE)
+theme_set(theme_minimal(base_family="Times"))
+green = '#00AF64'
+blue = '#0B61A4'
+red = '#FF4900'
+orange = '#FF9200'
+```
+
+> _Source paper:_ Dani Rodrik, ``The Real Exchange Rate and Economic
+  Growth'', _Brookings Papers on Economics Activity_ (Fall 2008,
+  pp.\ 365--412) https://www.brookings.edu/wp-content/uploads/2008/09/2008b_bpea_rodrik.pdf.
+
+
+
+
+
+# Linear models
+
+This should, by now, be easy.  We'll want to re-use the formula, so we keep it separate. There are no missing values in the dataset, so they don't need to be dealt with.
+```{r}
+# Fit a linear model of growth on underval and log(gdp)
+uv <- read.csv("http://www.stat.cmu.edu/~cshalizi/uADA/16/hw/02/uv.csv")
+formula1 = "growth~underval+log(gdp)"
+lm1 = lm(formula1,data=uv)
+lm1cis = confint(lm1)[2:3,]
+lm1.bhat = coefficients(lm1)[2:3]
+knitr::kable(cbind(lm1.bhat,lm1cis), digits = 3, caption='\\label{tab:lmgdp1} 
+             Coefficients and standard errors from the regression 
+             with under-valuation index and log(GDP).')
+```
+
+Note: we don't need to add a new column to `uv` which contains log GDP, or
+store that as a separate vector, and in fact it makes things easier later if we
+do not.  `lm` will handle the transformation for us, internally.
+
+The coefficients and their confidence intervals are in
+\autoref{tab:lmgdp1}. The coefficient of log(GDP) is positive, indicating that higher initial GDP
+predicts faster growth.  This is the opposite of "catching up"; rather, it's
+"the rich get richer".  On the other hand, the positive coefficient of under
+valuation index suggests that when under-valuation index is positive (i.e., the
+currency is under-valued), growth is faster on average.
+
+To add the year and the country to the regression, we change the formula:
+```{r}
+formula2 = "growth~underval+log(gdp)+factor(year)+country"
+lm2 = lm(formula2,data=uv)
+lm2cis = confint(lm2)[2:3,]
+lm2.bhat = coefficients(lm2)[2:3]
+knitr::kable(cbind(lm2.bhat,lm2cis), digits = 3, caption='\\label{tab:lmgdp2} 
+              Coefficients and standard errors for under-valuation index and
+              log(GDP) from the regression with those variables, and 
+              fixed effects for year and country.')
+```
+
+The coefficients and their standard errors are in
+\autoref{tab:lmgdp2}. The coefficients have changed, which must be due to correlations between these variables and the indicator variables for the years and countries. From the coefficients reported in \autoref{tab:lmgdp2}, both coefficients are again
+positive and quite a bit larger. Therefore, similar arguments can be made as in for the regression without the year and country effects.
+
+Treating `year` as a quantitative variable in a
+linear model would mean that every five-year increment of time would add or
+subtract the _same_ amount to expected growth rates --- growth would be
+either getting steadily faster or slower over time.  Since this obviously
+isn't what happens, a hack is to treat `year` as categorical, estimating
+a separate additive "fixed effect" for year.  (When we come to additive
+models, we'll see something less hackish.)
+
+
+\autoref{fig:coef_year} plots the coefficients of
+year versus time.  The vertical distance from each point to the horizontal
+line at $0$ is the difference in growth rate of a certain year compared to
+1955, the first category, holding all other variables fixed.  And the
+vertical distance between each pair of points is the differences in growth
+rate between those years. The graph shows that the jump between consecutive
+points is not constant, confirming again that modeling effect of each year
+separately is appropriate.  It also shows that, at a global scale, growth
+slowed down drastically in the 1970s and never really recovered.
+
+```{r, fig.cap='\\label{fig:coef_year} Plot of year coefficients from the regression model versus time',fig.align='center',fig.width=5}
+coef.year = coefficients(lm2)[4:12]
+data.frame(year=seq(1960,2000,by=5), coef.est = coef.year) %>%
+  ggplot(aes(year,coef.est)) + geom_line(color=blue) + geom_point(color=blue) + 
+  geom_hline(yintercept = 0, linetype=2)
+```
+
+
+
+```{r,echo=FALSE}
+looCV.forNiceModels <- function(mdl){ 
+  mean(residuals(mdl)^2/(1-hatvalues(mdl))^2)
+}
+
+```
+
+```{r}
+mdl.list = list(lm1, lm2)
+cvMSE = sapply(mdl.list, looCV.forNiceModels)
+```
+
+To use cross validation, I loaded the function `looCV.forNiceModels` from Chapter 4 lecture. You may then run it
+as you wish, without changing its definition in any way. You could also use the `cv.lm` function from Chapter 3. To do
+leave-one-out cross-validation in that case, we set the number of folds to be the number of
+rows of the data frame (as explained in the notes). This does leave-one-out cross-validation for the two models specified by the
+two formulas, and returns the vector of the cross-validated MSEs.  The
+second model, with fixed effects for country and year, actually improves by only about
+ `r round(100*(cvMSE[1]-cvMSE[2])/cvMSE[1],3)`% --- better than nothing, but not dramatic.
+ 
+As for why 5-fold is hard, we need at least one observation of each level of a
+qualitative variable to estimate its coefficient, and some countries have
+fewer than five observations.  (Some have just two.)  If we use five
+folds, some countries just won't appear in some training sets, and the
+model won't know what to do with them on the testing sets.  With at least two
+observations on each country and each year, however, leave-one-out CV will be
+able to work. (Note: Prof. Rodrik's original data set contained a
+few countries with just one observation; these were removed for
+this assignment, with only minute changes to the estimates.)
+
+```{r bootstrapping-functions}
+resample <- function(x) {
+    sample(x, size = length(x), replace = TRUE)
+}
+resample.data.frame <- function(data) {
+    sample.rows <- resample(1:nrow(data))
+    return(data[sample.rows, ])
+}
+rboot <- function(statistic, simulator, B) {
+    tboots <- replicate(B, statistic(simulator()))
+    if (is.null(dim(tboots))) {
+        tboots <- array(tboots, dim = c(1, B))
+    }
+    return(tboots)
+}
+bootstrap <- function(tboots, summarizer, ...) {
+    summaries <- apply(tboots, 1, summarizer, ...)
+    return(t(summaries))
+}
+equitails <- function(x, alpha) {
+    lower <- quantile(x, alpha/2)
+    upper <- quantile(x, 1 - alpha/2)
+    return(c(lower, upper))
+}
+bootstrap.ci <- function(statistic = NULL, simulator = NULL, tboots = NULL, 
+                         B = if (!is.null(tboots)) { 
+                           ncol(tboots) }, t.hat, level) {
+  if (is.null(tboots)) {
+    stopifnot(!is.null(statistic))
+    stopifnot(!is.null(simulator))
+    stopifnot(!is.null(B))
+    tboots <- rboot(statistic, simulator, B)
+  }
+  alpha <- 1 - level
+  intervals <- bootstrap(tboots, summarizer = equitails, alpha = alpha)
+  upper <- t.hat + (t.hat - intervals[, 1])
+  lower <- t.hat + (t.hat - intervals[, 2])
+  CIs <- cbind(lower = lower, upper = upper)
+  return(CIs)
+}
+```
+
+```{r my-bootstrap-functions, echo=FALSE, cache=TRUE}
+best.lm = mdl.list[[which.min(cvMSE)]]
+resample.uv.points <- function() resample.data.frame(uv)
+resample.uv.resids <- function(){
+  df = uv
+  df$growth = predict(best.lm) + resample(residuals(best.lm))
+  return(df)
+}
+est.uv.lm <- function(data) {
+    fit <- lm(formula(best.lm), data=data)
+    return(coefficients(fit)[2:3])
+}
+
+uv.lm.points.ci = bootstrap.ci(est.uv.lm, resample.uv.points, level=0.95,
+                               t.hat = coefficients(best.lm)[2:3],
+                               B = 250)
+uv.lm.resids.ci = bootstrap.ci(est.uv.lm, resample.uv.resids, level=0.95,
+                               t.hat = coefficients(best.lm)[2:3],
+                               B = 250)
+```
+
+Finally, for the bootstrap, it is _possible_ that resampling points will not work for the same reasons that 5-fold CV doesn't work. For me, it worked every time I tried. The table below shows both of these versions. Resampling residuals doesn't do much to effect the CI. But resampling points results in wider CIs. The coefficient estimates are still significant, however (none of these CIs overlap with 0). The table below has the estimates along with the original CIs and both bootstrapped versions
+
+```{r bootstrap-table, fig.cap="Estimates, Original CIs, Residual Bootstrap, Bootstrap with Shuffled Data"}
+knitr::kable(cbind(coefficients(best.lm)[2:3], confint(best.lm)[2:3,], 
+                   uv.lm.resids.ci, uv.lm.points.ci), digits=3)
+```
+
+# Kernel Smoothing
+
+If necessary, install the `np` package first:
+
+```
+install.packages("np",dependencies=TRUE)
+```
+
+Then run `npreg` as instructed.  Note that we don't have to tell
+`npreg` to treat `country` as a categorical variable (it does that
+automatically, because that column contains factors), and we don't even really
+need to treat `year` as qualitative, either, because the kernel regression
+won't impose an artificial linear trend over time.  However, here it does
+little harm.  
+
+```{r, results='hide', cache=TRUE}
+library(np)
+kernel.model = npreg(growth~underval+log(gdp)+factor(year)+factor(country),
+                   data=uv, tol=1e-3, ftol=1e-4)
+```
+
+There are no coefficients for the kernel regression.  We have coefficients in
+linear models, because they work by multiplying the covariates by constants,
+the coefficients, and adding those terms up.  Kernel regressions just take
+weighted averages of the actual data points, with weights which shift according
+to where we're making predictions.  The whole notion of "the coefficients"
+makes no sense for kernel regressions (or most other kinds of models).
+
+
+\autoref{fig:predkernVpredlin} plots the
+predicted values of the kernel regression against the predicted values of the
+linear model.
+
+```{r, fig.align='center', fig.cap = '\\label{fig:predkernVpredlin} Predicted values of kernel regression against predicted values of the linear model; the dashed red line shows equality.',fig.width=6}
+data.frame(linear = fitted(lm2), kernel=fitted(kernel.model)) %>%
+  ggplot(aes(linear, kernel)) + geom_point(color=blue) +
+  ylab("predicted value by kernel regression") +
+  xlab("predicted value by linear regression") +
+  geom_abline(intercept=0,slope=1,color=red,linetype=2)
+```
+
+
+\autoref{fig:residVpredkernel} plots the residuals
+against predicted values for our kernel regression.  Ideally, this should
+show a scatter around 0.  The ideal regression function $\mu(x)$ is the
+conditional mean, $\mu(x) = \mathbb{E}[Y | X=x]$.  The residuals of this ideal
+regression would be $Y-\mu(x)$, and their average value would be
+$\mathbb{E}[Y-\mu(X)|X=x] = \mathbb{E}[Y | X=x] - \mu(x) = 0$ everywhere.  Instead, we
+see that the residuals tend to be positive when the predicted values
+$\hat{\mu}(x)$ are large, and negative when $\hat{\mu}(x)$ is small.  This means
+that the model is systematically under-predicting at the high end and
+over-predicting at the low end.  (This may be due to "boundary bias", whose
+nature and treatment will be covered in chapter 7.)
+
+```{r, fig.align='center', fig.cap='\\label{fig:residVpredkernel} Residuals of the kernel regression versus predicted values.',fig.width=6}
+data.frame(fits = fitted(kernel.model), resids=residuals(kernel.model)) %>%
+  ggplot(aes(fits, resids)) + geom_point(color=blue) +
+  ylab("residuals from kernel regression") +
+  xlab("predictions from kernel regression") +
+  geom_hline(yintercept=0,color=red,linetype=2)
+```
+
+As described in the notes, `npreg` uses cross-validation to pick bandwidths, and stores the cross-validated MSE along with those bandwidths: `r round(kernel.model$bws$fval,3)`.
+
+This is about `r round(100*(1-kernel.model$bws$fval/min(cvMSE)),3)`% better than the best of the two linear models --- again,
+not a huge change, but real.  
+
+As also described in the notes, the (so to speak) "headline" MSE reported
+by `summary(kernel.model)` is merely the in-sample MSE.  Likewise, the
+$R^2$, here `r kernel.model$R2` (!), is in-sample value.
+

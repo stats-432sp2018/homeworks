@@ -33,8 +33,3 @@ cache/
 *.utf8.md
 *.knit.md
 .Rproj.user
-
-hw1sol
-hw2sol
-hw3sol
-hw4sol*
