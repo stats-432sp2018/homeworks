@@ -1,0 +1,197 @@
+---
+title: "Homework 5 Solutions"
+author: "Solution"
+date: "29 March 2018"
+output:
+  pdf_document:
+    fig_caption: yes
+    number_sections: yes
+  html_document:
+    fig_caption: yes
+    theme: flatly
+---
+```{r, include=FALSE}
+# General set-up for the report:
+# Don't print out code
+# Save results so that code blocks aren't re-run unless code
+# changes (cache), _or_ a relevant earlier code block changed (autodep),
+# don't clutter R output with messages or warnings (message, warning)
+library(MASS)
+library(knitr)
+opts_chunk$set(echo=FALSE,
+               cache=TRUE, autodep=TRUE,
+               message=FALSE, warning=FALSE)
+# Turn off meaningless clutter in summary() output
+options(show.signif.stars=FALSE)
+library(ggplot2)
+theme_set(theme_minimal(base_family="Times"))
+green = '#00AF64'
+blue = '#0B61A4'
+red = '#FF4900'
+orange = '#FF9200'
+```
+
+# Comparing methods
+
+
+* We're going to regress `happiness.scale.mean` (a measure of
+happiness) on `treatment` (0 is control, 1 is treatment), 
+`female` (1 if female), `incomegt40k` (1 if income $>$ \$40,000),
+` degree` (1 if they have a college degree). We don't need to convert these
+4 to factors since there are only two levels (though the coefficient names in 
+`summary` would be more interpretable if we recoded them). We will also use `age` and `yearsmar`.
+```{r}
+sexstudy = read.csv('sexstudy.csv')
+sexstudy = subset(sexstudy, select=c('happiness.scale.mean','treatment',
+                                     'female','incomegt40k','degree','age','yearsmar')) # git rid of the other columns for convenience.
+```
+* Fit a linear model, call it `sslm`.
+```{r}
+sslm = lm(happiness.scale.mean~.,data=sexstudy)
+```
+* Fit an additive model (hint: only continuous variables need to
+  be smoothed), call it `ssgam`. Plot the partial response functions.
+```{r, message=FALSE,fig.align='center',fig.height=4}
+require(mgcv)
+ssgam = gam(happiness.scale.mean~treatment+female+incomegt40k+degree+
+              s(age)+s(yearsmar), data=sexstudy)
+plot(ssgam,pages=1,shade=TRUE)
+```
+
+* We don't need to smooth factors because they can only take discrete outcomes. Therefore, the only possible functional dependence is additive changes from one level to the next. This is exactly what happens when you include factors linearly.
+* The coefficients are `r round(coef(sslm)[2],3)` and `r round(coef(ssgam)[2],3)` respectively. Both of these indicate that the treatment (doubling sexual activity) leads to a decrease in happiness (however that was measured).
+* The following code extracts the leave-one-out CV from both
+  models and prints it.
+```{r}
+cv.glm = function(glmObj) mean((residuals(glmObj)/(1-hatvalues(glmObj)))^2) # same as for lm
+cv.gam = function(gamObj) mean((residuals(gamObj)/(1-gamObj$hat))^2) 
+data.frame(cv.glm(sslm),cv.gam(ssgam))
+```
+Based on leave-one-out CV, we slightly prefer the additive model, mainly because of the seemingly quadratic effect of `yearsmar` on happiness.
+
+* Re-estimate the additive model but smoothing `age` and
+    `yearsmar` together.
+```{r,fig.align='center',fig.height=4, fig.width=4}
+ssgam2 = gam(happiness.scale.mean~treatment+female+incomegt40k+degree+
+              s(age, yearsmar), data=sexstudy)
+plot(ssgam2,pages=1,scheme=2)
+```
+
+* Someone suggests we recode age into bins: $0-40$, $41-50$,
+    $51-60$, $60+$. Use the `cut` function to make a new
+    variable, `age2`. Estimate the linear model and an appropriate
+    additive model using `age2` instead of `age`.
+```{r, fig.height=4, fig.width=4,fig.align='center'}
+sexstudy$age2 = cut(sexstudy$age, c(0,40,50,60,100))
+sslm2 = lm(happiness.scale.mean~.-age,data=sexstudy)
+ssgam3 = gam(happiness.scale.mean~treatment+female+incomegt40k+degree+age2+
+              s(yearsmar), data=sexstudy)
+plot(ssgam3,shade=TRUE)
+```
+It is no longer useful to smooth `age2` since it is a factor (see above).
+
+* You have now made 3 more models. Modify the code to calculate
+    their leave-one-out CV scores. Which model is better?
+```{r}
+data.frame(cv.glm(sslm),cv.glm(sslm2),cv.gam(ssgam),cv.gam(ssgam2),cv.gam(ssgam3))
+best.mod.treat.ci = coef(ssgam)[2]+c(-2,2)*summary(ssgam)$se[2]
+```
+Based on this output, it seems like the original additive model is preferred.
+
+* The only thing we care about is whether the treatment led to
+  an increase in happiness. Since the coefficient on treatment from our best model is `r round(coef(ssgam)[2],3)` with a 95% CI of (`r round(best.mod.treat.ci,3)`) (approximate), we suggest that the treatment probably led to a __decrease__ in happiness. That is, people who were made to have more sex were less happy. This at first seems unexpected, but probably shouldn't be. People who are made to do something more or less than they had already decided to do are probably worse off. These couples chose to have sex with some particular frequency, and forcing them to double it is undesirable, just as forcing them to half it would likely be undesirable.
+  
+# Writing functions
+
+Below is one way to fix up these functions.
+```{r modified-functions, echo=TRUE}
+logit <- function(z){ 
+  stopifnot(z>0, z<1) # need z between zero and 1
+  log(z/(1-z))
+}
+ilogit <- function(z){ 
+  stopifnot(is.finite(z)) # need finite z
+  exp(z)/(1+exp(z))
+}
+sim.logistic <- function(n, beta.0, beta) {
+  stopifnot((p <- length(beta)) >= 1, n > 0)
+  x = matrix(rnorm(n*p), n, p)
+  linear.parts <- beta.0+(x%*%beta)
+  y <- rbinom(nrow(x), size=1, prob=ilogit(linear.parts))
+  df = data.frame(y,x)
+  if(ncol(x)==1) names(df)[2] = 'X1'
+  return(df)
+}
+```
+
+```{r generating-logit-data}
+n=250
+beta=3:1
+beta.0=0
+set.seed(04062017)
+dat = sim.logistic(n, beta.0, beta)
+
+
+library(mgcv)
+logr.mod = glm(y~.-1, data=dat, family='binomial')
+gam.mod = gam(y~s(X1)+s(X2)+s(X3)-1, data=dat, family='binomial')
+```
+
+```{r logit-selection-borrowed}
+binary_calibration_plot <- function(y, model, breaks = 0:10/10, 
+                                    point.color='blue', line.color='red') {
+  fitted.probs = predict(model, type="response")
+  ind = cut(fitted.probs, breaks)
+  freq = tapply(y, ind, mean)
+  ave.prob = tapply(fitted.probs, ind, mean)
+  se = sqrt(ave.prob*(1-ave.prob)/table(ind))
+  df = data.frame(freq, ave.prob, se)
+  g <- ggplot(df, aes(ave.prob,freq)) + geom_point(color=point.color) + 
+    geom_abline(slope = 1, intercept = 0,color=line.color) +
+    ylab("observed frequency") + xlab("average predicted probability") +
+    geom_errorbar(ymin=ave.prob-1.96*se, ymax=ave.prob+1.96*se) +
+    ylim(0,1)+xlim(0,1) + 
+    geom_rug(aes(x=fitted.probs,y=fitted.probs),data.frame(fitted.probs),sides='b')
+  return(g)  
+}
+
+simulate.from.logr <- function(df, mdl) { # altered to work with any glm output
+  probs <- predict(mdl, type="response") # don't want newdata argument due to factors
+  newy <- rbinom(n=nrow(df), size=1,prob=probs)
+  df[[names(mdl$model)[1]]] <- newy # the names part, gets the response from the df
+  return(df)
+}
+
+# Simulate from an estimated logistic model, and refit both the logistic
+  # regression and a generalized additive model
+# Better code than in the textbook
+# Inputs: data frame with covariates (df), fitted logistic model (logr), fitted gam (gamr)
+# Output: difference in deviances
+delta.deviance.sim <- function (df, logr, gamr) {
+  sim.df <- simulate.from.logr(df, logr)
+  GLM.dev <- glm(logr$formula,data=sim.df,family="binomial")$deviance # used formulas instead
+  GAM.dev <- gam(gamr$formula,data=sim.df,family="binomial")$deviance
+  return(GLM.dev - GAM.dev)
+}
+```
+
+
+```{r logit-selection}
+nrepls = 250
+dist = replicate(nrepls, delta.deviance.sim(dat, logr.mod, gam.mod))
+obs = logr.mod$deviance-gam.mod$deviance
+pval = mean(dist>obs)
+```
+
+We simulate and test as instructed. Based on `r nrepls` replications, we derive a $p$-value of `r pval`. We fail to reject the null hypothesis that the linear logistic regression is sufficient for describing these data. Finally, we produce a calibration plot and a confusion matrix.
+
+```{r logit-calibration, fig.width=6,fig.height=4,fig.align='center',}
+g = binary_calibration_plot(dat$y,model=logr.mod, point.color = blue, 
+                        line.color = red)
+g
+```
+```{r logit-confusion}
+(confusion <- table(dat$y, as.integer(predict(logr.mod, type='response')>0.5), dnn=c('reality','prediction')))
+```
+
+The model appears to be reasonably well calibrated (though $n=$ `r n` is a bit small to use so many bins). In my case, the observed frequencies nearly always fall inside the confidence interval, with the exception of the bin with predicted probabilities around 0.55. From the confusion matrix, we appear to be reasonably accurate (a `r 1-sum(diag(confusion))/sum(confusion)`% error rate), and this accuracy is symmetric (we miss 0's and 1's at about the same rate). 

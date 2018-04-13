@@ -1,0 +1,946 @@
+---
+title: "Homework 6"
+author: "Solution"
+date: "2 April 2017"
+output:
+  pdf_document:
+    fig_caption: yes
+    number_sections: yes
+  html_document:
+    fig_caption: yes
+    theme: flatly
+---
+
+```{r, include=FALSE}
+# Set up options for knitting code, without including any output at all in the
+# knitted file
+library(knitr)
+opts_chunk$set(size="small",cache=TRUE, autodep=TRUE, fig.align='center', fig.width=6, fig.height=4)
+library(tidyverse)
+theme_set(theme_minimal(base_family="Times"))
+green = '#00AF64'
+blue = '#0B61A4'
+red = '#FF4900'
+orange = '#FF9200'
+require(xtable)
+options(xtable.comment=FALSE)
+```
+
+
+# Introduction
+
+In this report, we examine under what circumstances, and to what extent,
+non-violent movements can achieve large-scale political change in the face of
+opposition from an existing state.  We are especially charged with learning
+when non-violent movements are more likely to succeed than violent ones,
+and how large these differences in the probability of success are under
+different circumstances.
+
+Three factors of particular concern are the role of state violence, the role of
+interventions from other states, and the role of democracy.  Critics of
+non-violence as a political tactic have long charged that it is only effective
+when dealing with "nice" governments --- ones which will not meet moral force
+with lethal violence, and which are democratic enough to be swayed by public
+opinion.[^1]  The effectiveness of foreign interventions, either on behalf of
+existing governments or of opposition movements, is meanwhile a continual
+source of debate within countries considering such interventions, and of course
+for those on their receiving end.
+
+[^1]:  See, for example, George Orwell's 1949 essay "Reflections on Gandhi".
+
+This report thus examines how well the success of anti-government movements can
+be predicted on the basis of their non-violence, whether the government engages
+in violent repression of the movement, the level of democracy of the
+government, and the presence or absence of foreign aid to the two sides in the
+conflict.  We also consider a number of control variables: the duration of the
+movement, the year in which it peaked, whether the government was the target of
+international sanctions, and whether or not significant elements of the
+government's security forces defected to the movement.  Sanctions and
+defections have obvious relevance to success; the ability of the movement to
+sustain itself for a long time may also be relevant; and year can serve as a
+proxy for political conditions extending beyond the borders of any one country,
+but perhaps affecting how well governments can resist internal pressures,
+or how willing opposition groups are to challenge state power.
+
+
+
+
+## Preliminary Examination of the Data
+
+```{r, include=FALSE}
+# Load necessary packages
+library(mgcv)
+# Load the data
+navc <- read.csv("navc.csv")
+# Function to report a number as a percentage to so many significant digits
+percentage <- function(x,digits=3) { signif(100*x,digits=digits) }
+```
+
+The units of analysis in our data set are particular political movements
+in particular countries.  The data file contains `r nrow(navc)` such
+movements, in `r length(unique(navc[,"country"]))` countries --- this
+indicates that some countries have seen multiple movements, but, on
+examination, many countries have only one recorded movement.
+
+The summary statistics of the variables reveal that there is little missing
+data (`r sum(is.na(navc$defect))` for `defect` and
+`r sum(is.na(navc$democracy))` for `democracy`).
+`r percentage(mean(navc$nonviol))`% of the movements were non-violent.  The
+oldest
+movement is from from `r min(navc$year)`, the latest from `r max(navc$year)`,
+with most in the last half of the period (Figure 1), and one quarter of them all since
+`r quantile(navc$year,0.75)`.  
+```{r hist, echo=FALSE, fig.height=3,fig.width=5,fig.cap='Figure 1: Histogram of peak years'}
+ggplot(navc, aes(year)) + geom_histogram(binwidth = 5,color=blue,fill=orange)
+```
+(This may be a bias in the sample, or it may mean
+such movements are becoming more frequent, and our analysis is more important
+than ever.)  Otherwise, the only variable whose distribution turned out to be
+relevant to the analysis was `duration`, which is highly skewed to the right:
+```{r, echo=FALSE}
+summary(navc$duration)
+```
+
+
+
+```{r loose-codings, include=FALSE}
+# Loose standard for success:
+navc$loose <- ifelse(navc$outcome>0,1,0)
+# Strict standard for success:
+navc$strict <- ifelse(navc$outcome<1,0,1)
+# Pick one of them, but give it a new name, so the rest of the code would
+# not have to change if we wanted to go the other way
+navc$target <- navc$loose
+```
+
+
+Since it was part of our terms of reference to use logistic-additive models, we
+need to re-code partial successes as either full successes or complete
+failures.  Since it's rare for any political force to ever be _completely_
+successful, we will re-code partial successes as successes.
+`r percentage(mean(navc[,"target"]))`% of the movements then count as
+successful.
+
+
+
+# The Model
+
+
+## Formulation
+
+To address the scientific questions, we turn to a generalized additive model,
+which relates the probability of movement success to the factors of interest.
+Specifically, following our terms of reference, we use a **logistic** model,
+meaning that our model will directly predict the log odds of success,
+$\log{p/(1-p)}$, and the probability of success only after a transformation.
+Moreover, again following the terms of reference, we use an **additive**
+model --- each term in the model makes a separate, additive contribution to the
+log odds (i.e., it multiplies the odds of success).
+Mathematically, writing $x_j$ for the different predictor variables, we start
+with a model of the form
+\[
+\log{\frac{p}{1-p}} = \alpha + \sum_{j}{f_j(x_j)}
+\]
+where the $f_j$ are smooth, possibly linear, functions of the predictors.  (If
+$x_j$ is binary, $f_j$ is always linear!)  We may also  include terms in
+the sum which are functions of pairs of variables, to capture interactive
+effects or contrasts between conditions.
+
+Our initial formulation of which terms to put in the model is guided by the
+terms of reference, and the analytical questions posed to us.  We are told that
+all three continuous predictors --- the year, the duration, and the level of
+democracy --- should be included.  We also include all of the categorical
+predictors.  The analytical questions specifically ask about the interaction of
+non-violence (on the part of the movement) with violent repression (on the part
+of the government), so we include that interaction term.  The last of the
+analytical questions also ask about the interactions between non-violence and
+democracy.  We therefore include both a direct effect for democracy, and a
+partial response function interacting democracy with non-violence.  Categorical
+predictors may not be smoothed, so they enter into the model as parametric
+terms; all the continuous variables will be smoothed, because we have no
+theoretical reason to favor any parametric form for them.
+
+The specification we are led to, then, may be put in R form:
+```{r}
+mdl.base <- gam(target ~ nonviol*viol.repress + sanctions + aid + support
+                + defect + s(year) + s(duration)
+                + s(democracy) + s(democracy,by=nonviol),
+                data=navc, family="binomial", na.action=na.exclude)
+```
+
+The `nonviol*viol.repress` expression in the formula will give terms for
+the non-violence of the movement, for the presence of violent repression, and
+for a non-violent movement confronting violent repression; it is that last
+which tries to captures the difference in response to repression between
+non-violent and violent movements.  Similarly, this model includes a direct
+effect of democracy, applying to all movements, and an additional smooth
+function of democracy that _only_ gets added for non-violent movements.
+The last function allows the contrast between violent and non-violent movements
+to change with the level of democracy.
+
+```{r, echo=FALSE}
+mdl.log <- gam(update(formula(mdl.base), . ~ .-s(duration)+s(log10(duration))),
+               data=navc,family="binomial", na.action=na.exclude)
+```
+
+
+However, `duration` was extremely skewed; this can cause problems for
+smoothing when there are not that many observations.  We thus also consider a
+model which is the same as the previous one but smoothes
+`log10(duration)` instead of `duration`.  Using log base 10
+rather than natural log helps us keep things interpretable (as most people
+grasp ${10}^3$ better than $e^{6.9}$).  To decide which version is better, we
+use cross-validation, and in particular the cross-validated deviance score
+which is computed by the `gam` function as part of its model-fitting.
+The cross-validated deviance without logging `duration` is
+`r signif(mdl.base$gcv, 3)`, while that of the model with transformation is
+`r signif(mdl.log$gcv, 3)`.  Since taking the log of `duration` before
+smoothing it not only unskews, it leads to better predictions, we discard the
+first model in favor of the logged one.
+
+
+## Analysis, Including Estimates and Uncertainties {#sec:analysis}
+
+```{r bootstrap-functions,  include=FALSE }
+# Having estimated the model, we need to do a bunch of bootstrapping
+
+# Resampling functions from the notes
+resample <- function(x) { sample(x,size=length(x),replace=TRUE) }
+resample.data.frame <- function(data) { data[resample(1:nrow(data)),] }
+
+# For the sake of the extra stuff (see appendix), I want to write my own code
+
+# Estimate a GAM on a data frame
+# Inputs: data frame, formula for the model
+# Output: a gam object
+gam.estimator <- function(data, form=formula(mdl.log)) {
+    return(gam(formula=form,data=data,family="binomial"))
+}
+
+# Extract the parametric coefficients from a semi-parametric model
+# Inputs: the model
+# Output: the vector of parametric coefficients
+# Presumes: the summary method for the model class returns something with a
+  # p.coef component
+param.extractor <- function(mdl) {
+    return(summary(mdl)$p.coef)
+}
+```
+
+```{r,  include=FALSE }
+# Slight modification of the code from the notes: rather than doing the
+# bootstrapping in here (and so re-doing it for every set of CIs), pass in
+# a list of bootstrapped models, and then the function to extract the
+# desired parameter, curve, etc.
+bootstrap.cis <- function(rboot.mdls, extractor, main.mdl, level, ...) {
+    alpha=1-level
+    # Here we grab the statistic we want.
+    rboot.extracts <- sapply(rboot.mdls, extractor, ...)
+    t.hat <- extractor(main.mdl, ...) # grab it on the real data
+    # note the use of apply below
+    lo.quantiles <- apply(rboot.extracts,1,quantile,probs=alpha/2)
+    hi.quantiles <- apply(rboot.extracts,1,quantile,probs=1-alpha/2)
+    hi.limits <- 2*t.hat - lo.quantiles
+    lo.limits <- 2*t.hat - hi.quantiles
+    return(data.frame(lo=lo.limits,est=t.hat,hi=hi.limits))
+}
+```
+
+```{r,  include=FALSE }
+# Create a big long list GAMs fit to resampled data
+  # simplify=FALSE to force replicate() to return a list
+boot.gams <- replicate(100, gam.estimator(resample.data.frame(navc)),
+                       simplify=FALSE)
+```
+
+
+```{r,  include=FALSE }
+# Create confidence sets: one for the parametric terms, and then one each
+# for the smooth partial response functions
+parametric.term.CIs <- bootstrap.cis(rboot.mdls=boot.gams,
+                                     extractor=param.extractor,
+                                     main.mdl=mdl.log,
+                                     level=0.95)
+```
+
+Table 1 gives the model's parametric terms.  Here,
+and throughout, all confidence bands were calculated by resampling of
+cases.
+
+
+```{r parametric-terms,echo=FALSE}
+p.coefs <- summary(mdl.log)$p.coef
+kable(parametric.term.CIs,caption="Table 1: Point estimates and 95% confidence intervals for the model's parametric terms based on the bootstrap replications.", digits=2)
+```
+
+
+The coefficient on `nonviol` is positive, meaning that non-violent
+movements are more likely to be successful than violent ones are; indeed, the
+positive coefficient of `r signif(p.coefs["nonviol"],2)` means that a
+non-violent movement's odds of success are
+`r signif(exp(p.coefs["nonviol"]),2)` times those of an otherwise-similar
+but violent movement.  Violent repression on the other hand lowers the odds of
+success.  The fact that the interaction term `nonviol:viol.repress` is
+negative means that violent repression hurts non-violent movements more than
+violent ones --- though a non-violent movement confronting violence still has
+odds `r signif(exp(sum(p.coefs[c("nonviol","nonviol:viol.repress")])),2)`
+times better than those of a violent movement in the same situation.
+
+The coefficient on `aid` implies that when the government receives aid
+from other states specifically to help it deal with the movement, the
+movement's odds of success go _up_ by about
+`r percentage(exp(p.coefs["aid"])-1,2)`%.  This does not necessarily mean
+that such aid is counter-productive; other countries may only send aid to
+governments which are already in trouble, dealing with movements which would
+have been even more likely to win otherwise; the coefficient would combine the
+real effects of aid with this "selection effect"[^2].  The coefficient on
+support from foreign governments to the anti-government movement is also
+positive[^3], indicating an increase in the odds by a factor of
+`r signif(exp(p.coefs["support"]),2)`.  The coefficient on sanctions is
+negative[^4], indicating that sanctions on the government predict a _lower_
+probability of success for the movement.  Finally, and unsurprisingly[^5],
+defection of the security forces increases the movement's chances.
+
+[^2]: People who were in a hospital a year ago are more likely to be dead now than those who weren't, but not, for the most part, because their doctors killed them.
+[^3]: Which could also be a selection effect: why waste it on a movement bound to fail?
+[^4]: Perhaps the reverse of the selection-effect story for aid to the government?
+[^5]: But perhaps another selection effect: deserting an already-losing side.
+
+All of the above refers to the point estimates.  The other two columns of Table
+1 show the 95% confidence limits, which in every
+single case include 0; some of them (like the coefficients on nonviolence) are
+remarkably wide.  This does not appear to be a bug, but rather a genuine
+reflection of massive instability in all the coefficients, even while the model
+as a whole manages to predict quite well.
+
+
+```{r partial-resp-funcs,  echo=FALSE, fig.cap="Figure 2: The smooth terms in the GAM, plotted without error bars, but with a common vertical range. The vertical axis is in units of log-odds of success (i.e., on the logit scale), not probability."}
+par(las=1,bty='n', mar=c(5,4,0,0))
+plot(mdl.log, pages=1, se=2,las=1,bty='n',shade=TRUE)
+```
+
+Figure 2 shows the partitial response functions for our model. The partial response to year increases monotonically over time, tracking the break-up of empires from global military conflicts[^halliday].  The partial response to duration says that very short and very enduring
+movements are both more likely to succeed than those which last about a year.
+The high success rate of short movements may be another selection effect --- a
+movement can win quickly, but, once it's mobilized, losing takes times.
+
+
+[^halliday]: Cf. Fred Halliday, _Revolution and World Politics: The Rise and Fall of the Sixth Great Power_ (Durham, North Carolina: Duke University Press, 1999).
+
+
+```{r demonv-curve,  echo=FALSE, fig.align="center", fig.cap="Figure 3: The sum of the two democracy curves",fig.width=5,fig.height=3}
+# Grid for plotting the smoother against democracy (like plot(gam.mdl), but I want
+# to add 2 of them and don't know how to get it out.
+democracy.nonviol.grid <- data.frame(nonviol=1,viol.repress=0,sanctions=0,aid=0,
+                             support=0,defect=0,year=1950,
+                             democracy=seq(from=-10,to=10,length.out=50),
+                             duration=100)
+
+# Report the sum of selected terms as model's swept over a grid
+# Inputs: fitted model, vector of term names, a particular grid (not list)
+# Outputs: vector of summed prediction terms along the grid
+# Presumes: term names actually exist in the model
+sum.smooth.extractor <- function(mdl, terms, grid) {
+    all.terms <- predict(mdl, newdata=grid, type="terms")
+    our.terms <- all.terms[,terms]
+    return(rowSums(our.terms))
+}
+democracy.nonviol.grid$demonv.curve <- sum.smooth.extractor(mdl.log,
+                    terms=c("nonviol","s(democracy)","s(democracy):nonviol"),
+                    grid=democracy.nonviol.grid)
+ggplot(democracy.nonviol.grid, aes(democracy,demonv.curve)) + geom_line()+
+  xlab("Democracy")+ ylab("Effects of non-violent movements")
+```
+
+Finally, we consider democracy and its interaction with non-violence.  Figure 2 shows the two relevant partial response functions: the main effect 
+of democracy, applying to all movements, and the interaction of democracy and
+non-violence.  The former shows a somewhat complicated pattern --- movements
+are relatively more likely to succeed against the most anti-democratic regimes
+(hereditary monarchies), and then again even more against those which are only
+moderately anti-democratic ($\approx -4$: South Korea a few decades ago, Latin
+American military dictatorships etc.).  The odds of success then fall as the
+country becomes more democratic, only to shoot up in the most democratic
+countries.  The interaction curve, added on for non-violent movements only, is
+a straight line through the origin, saying that the extra contribution of
+non-violence is increasingly positive as the country becomes more democratic,
+and increasingly negative as an anti-democratic country becomes even less
+democratic.  To get the over-all pattern of success for non-violent movements
+as a function of democracy, we add the two curves (Figure
+3); this sum shows that over-all non-violent movements are
+increasingly likely to succeed as the country becomes more democratic, but
+without much difference over a broad range of values in the middle.
+
+
+
+
+As with the parametric coefficients, however, when we look at the above
+confidence bands, every single one of them includes zero everywhere at the 95%
+level (Figure 2).[^6]  Those for the interaction of democracy and nonviolence,
+and for duration, have the same huge width we saw for the coefficients related
+to non-violence.  That all the confidence bands include 0 does not, of course,
+mean that every term should be removed from the model.
+
+[^6]: Note that _really_ we should bootstrap the bands around the smooths as well. I 
+did this in the appendix, because it's a bit painful. But do have a look.
+
+
+
+
+
+## Model Checking {#sec:classification}
+
+All of the above conclusions presume our model is a good description of the
+process that generated the data.  Thus, our model must be checked before our
+conclusions can have any credibility.  We check the model two ways: can it
+predict the outcome?  are its probabilities calibrated? are the residuals
+patternless?
+
+Since the outcome variable is a binary category, we can look at how well the
+model predicts it.  As the model gives a _probability_ of success, we
+threshold that probability, predicting success just when $p \geq 0.5$.  We can
+check the error rate of these classifications both in-sample and, through
+cross-validation, out of sample.
+
+```{r,  include=FALSE }
+in.sample.preds <- round(fitted(mdl.log))
+in.sample.confusion <- table(in.sample.preds, navc$target,
+                             dnn=c("prediction","data"))
+in.sample.err.rate <- 1-sum(diag(in.sample.confusion))/sum(in.sample.confusion)
+```
+
+```{r,  include=FALSE }
+# Code for cross-validated classification error rates
+# From Lecture 12
+
+cv.mdl <- function(data, formulae, fit.function = lm, family=gaussian, nfolds = 5) {
+  data <- na.omit(data)
+  formulae <- sapply(formulae, as.formula)
+  responses <- sapply(formulae, function(form) all.vars(form)[1])
+  names(responses) <- as.character(formulae)
+  n <- nrow(data)
+  fold.labels <- sample(rep(1:nfolds, length.out = n))
+  mses <- matrix(NA, nrow = nfolds, ncol = length(formulae))
+  colnames <- as.character(formulae)
+  for (fold in 1:nfolds) {
+    test.rows <- which(fold.labels == fold)
+    train <- data[-test.rows, ]
+    test <- data[test.rows, ]
+    for (form in 1:length(formulae)) {
+      current.model <- fit.function(formula = formulae[[form]], data = train, 
+                                    family=family) #change here
+      predictions <- predict(current.model, newdata = test, type='response') # change here
+      test.responses <- test[, responses[form]]
+      test.errors <- test.responses - predictions
+      mses[fold, form] <- mean(test.errors^2)
+    }
+  }
+  return(colMeans(mses))
+}
+```
+
+```{r, include=FALSE}
+misclass.5fold <- cv.mdl(navc,formulae=c("target~1",formula(mdl.log)),fit.function = gam,
+                         family=binomial)
+```
+
+As a baseline, the in-sample classification should have no more error than
+always predicting the more common class, which is wrong
+`r percentage(min(1-mean(navc$target), mean(navc$target)),2)` percent of
+the time.  The actual in-sample error rate for our model is
+`r percentage(in.sample.err.rate,2)`.  Under five-fold cross-validation,
+both do somewhat worse: the constant prediction has an out-of-sample error rate
+of `r percentage(misclass.5fold[1],2)`%, while the GAM is wrong only
+`r percentage(misclass.5fold[2],2)`% of the time.  We clearly have
+non-trivial predictive power, even though the model was not built to classify.
+
+
+
+### Calibration {#sec:calibration}
+
+```{r, include=FALSE}
+# Code from Lecture 12
+binary_calibration_plot <- function(y, model, breaks = 0:10/10, 
+                                    point.color='blue', line.color='red') {
+  fitted.probs = predict(model, type="response")
+  ind = cut(fitted.probs, breaks)
+  freq = tapply(y, ind, mean)
+  ave.prob = tapply(fitted.probs, ind, mean)
+  se = sqrt(ave.prob*(1-ave.prob)/table(ind))
+  df = data.frame(freq, ave.prob, se)
+  g <- ggplot(df, aes(ave.prob,freq)) + geom_point(color=point.color) + 
+    geom_abline(slope = 1, intercept = 0,color=line.color) +
+    ylab("observed frequency") + xlab("average predicted probability") +
+    geom_errorbar(ymin=ave.prob-1.96*se, ymax=ave.prob+1.96*se) +
+    ylim(0,1)+xlim(0,1) + 
+    geom_rug(aes(x=fitted.probs,y=fitted.probs),data.frame(fitted.probs),sides='b')
+  return(g)  
+}
+
+```
+
+```{r calib-plot, echo=FALSE, fig.align="center",fig.height=3, fig.width=5, fig.cap='Figure 4: Calibration of probabilities'}
+binary_calibration_plot(navc$target, mdl.log, point.color = blue, line.color = red)
+```
+
+Figure 4 checks whether the model's probabilities are calibrated, using
+probability bins 10 percentage points wide.  Not only does success get more
+common as the predicted probability rises, those probabilities are reasonably
+well-calibrated, with deviations easily explicable by chance.
+
+
+
+### Residuals {#sec:residuals}
+
+```{r resid-plots, echo=FALSE, warning=FALSE, message=FALSE, fig.cap='Figure 5: Pearson residuals'}
+resid.df = select(navc, c(year,democracy,duration))
+resid.df$fitted = fitted(mdl.log)
+resid.df$residuals = residuals(mdl.log, type='pearson')
+resid.df %>% gather(key='key',value='value',-residuals) %>%
+  ggplot(aes(value,residuals)) + geom_point(color=blue) + geom_smooth(color=red) +
+  ylab("Pearson residuals") + facet_wrap(~key,scales='free_x')
+```
+
+
+Figure 5 plots the standardized or "Pearson" residuals, $\frac{y_i -
+p_i}{\sqrt{p_i(1-p_i)}}$ against the predicted probabilities $p_i$ and the
+three continuous predictors.  Each plot also has its own smoothing spline.
+Ideally, these would be exactly flat; to gauge departures from flatness, we
+simulated new responses from the fitted model, found their Pearson residuals,
+and added (faint) splines for them.  These indicate little cause for concern.
+
+
+
+
+# Results and conclusions
+
+Our model lets us answer all our analytical questions, without pre-judging any
+by excluding relevant interactions.  The model can predict out of sample, both
+in terms of likelihood and of
+[classification](#sec:classification), and, while the conditional variance of
+the residuals is not perfect (last figure), the
+model otherwise passes our usual checks of [calibration](#sec:calibration),
+[residuals](#sec:residuals), etc.  The [point estimates](#sec:analysis) tell a
+reasonable story: non-violent movements are more successful than violent ones;
+this advantage grows as the government they confront becomes more democratic,
+and shrinks in the face of violent repression, though not enough to make
+violence more likely to succeed.  Interventions to aid either side of the
+dispute predicts a higher probability of success for the anti-government
+movement, though perhaps for different reasons.  The estimates for controls
+(especially for the year) also make sense.
+
+Sadly for this story, the statistical uncertainty on all of the estimates is
+huge, swamping every single term (\autoref{tab:parametric-terms} and \autoref{fig:bootstrap-cis-figs}).  Further inquiry
+might try to expand the data set (e.g., it includes no movements from the
+United States), or find a simpler model which predicts (almost) as well and
+allows more precise estimates.  In the meanwhile, this model has some power to
+guess the outcomes of confrontations between political movements and
+governments, but it can't be precise about _why_ movements succeed or fail.
+
+
+\clearpage
+
+
+
+# Alternatives and Notes
+
+## Data Source
+
+This assignment was a re-analysis of the data from
+
+
+> Maria J. Stephan and Erica Chenowth, ``Why Civil Resistance Works; The
+Strategic Logic of Nonviolent Conflict'', \emph{International Security} \textbf{33}
+(2008): 7--44, \href{http://dx.doi.org/10.1162/isec.2008.33.1.7}{doi:10.1162/isec.2008.33.1.7}
+
+later expanded into a book
+
+> Erica Chenoweth and Maria J. Stephan, \emph{Why Civil Resistance Works; The
+Strategic Logic of Nonviolent Conflict} (New York: Columbia University Press, 2011)
+
+The paper, and the data set, are available from Prof. Chenoweth's [website](http://www.ericachenoweth.com).  For this exercise, we used the version of
+the data set which accompanied the original paper; expanded and corrected
+versions are available from Prof. Chenoweth's site, and you should really
+consult them if you are interested in following this up.
+
+The authors used a multinomial logistic model, but with __only__ linear terms
+in the model.  Perhaps for that reason they didn't use `year` directly
+as a covariate, but rather an indicator for whether the peak year of the
+movement fell during the Cold War.
+
+Their paper and book contains an account of __why__, under a broad range of
+circumstances, non-violent civil resistance should be more effective than
+violent rebellion, supported by cogent theoretical reasoning and detailed case
+studies.  Whether the data allows these theories to be tested with any sort of
+quantitative precision is another matter.
+
+The analysis which I am presenting here is taken (often without many alterations) from Cosma Shalizi's solutions to his assignment 2 years ago.
+
+## Recoding partial successes 
+
+As far as grading goes, having __any__ sensible reason to prefer one
+re-coding over another is enough; it would also be acceptable to try both
+re-codings and see which one, in some sense, worked better.  If you examine the
+R embedded in the solutions, you'll see that I created new columns for both a
+loose standard of success (partial success is still success), and a strict one
+(partial success is total failure).  I then added yet a third column
+(`target`), which copied the loose standard --- but all later code
+refers to that third column, so it would be easy to switch.
+
+An additional, albeit minor, reason to recode partial successes with successes
+rather than with failures is that this makes the data very nearly balanced
+between the two classes (166 full-or-partial successes to 157 failures),
+and an even balance between classes can lead to more stable estimates
+of classifiers.
+
+An alternative to doing any sort of recoding would be to use a model which can
+accommodate a three-level categorical response.  For logistic regression with a
+linear predictor, this can be done with the `multinom` function in the
+`MASS` package, but for additive models, we'd have to use the
+`VGAM` package, or something like it.  `VGAM` is vastly
+less user-friendly than `mgcv`, and interactions of continuous and
+discrete variables in particular require hand-coding --- see the source code for
+these solutions for a `VGAM` fit.
+
+
+
+## Categorical interactions
+
+Rather than using `nonviol*viol.repress`, and getting main effects and an
+interaction, we could have made the first expression on the right-hand side of
+the formula `factor(nonviol)*factor(viol.repress)`.  This would have
+estimated an effect for every combination of the two factors, which would
+convey the same information, but need us to do some subtraction to see the
+difference between applying violent repression to a violent movement, and
+applying it to a nonviolent movement.
+
+Similarly, if instead of `s(democracy) + s(democracy,by=nonviol)` we had
+written `s(democracy,by=factor(nonviol))`, R would have estimated a
+different smooth curve for `democracy` at each level of `nonviol`,
+which would have conveyed the same information.  (See `help(gam.models)`
+for more on the `by` option to smoothers.)
+
+In both cases, the model formulation in the main report was chosen to highlight
+the contrastive quantities or functions that we were asked to estimate.
+
+## Transforming predictors before smoothing 
+
+If a variable is very (say) right-skewed and we don't have all that many
+measurements of it, we'll have lots of closely-spaced observations at small
+values, and a few widely-spaced observations at large values.  Trying to find
+__one__ smoothing bandwidth which works well for both parts of the data would
+be hard.  In principle, with enough observations this doesn't matter, and
+splines are somewhat more robust to this effect than are kernels, but it can
+still be a difficulty.  Transforming the predictor before smoothing can help
+reveal structure which would otherwise be smothered.
+
+## Using the built-in cross-validation in `gam()` 
+
+Alternatively, we could use the `cv.gam` function from the earlier lecture.
+There will be some differences, since what
+`gam` computes is really the "generalized" cross-validation
+score, a fast approximation to leave-one-out CV that avoids having to
+refit the model $n$ times (see Section 3.4.3 of the notes).  The
+circulated code, on the other hand, is for $k$-fold CV, defaulting to $k=5$.
+
+## Bootstrapping the smooths
+
+Really, we shouldn't trust the confidence bands that `gam` plots for us. So we could bootstrap
+those as well. This is a little bit painful however, so you aren't expected to do it. I've done 
+it below though. This is the main reason that I kept around the entire fitted model for each 
+bootstrap replication: I can re-use the fits here and just calculate summaries rather
+than repeating the entire exercise.
+
+```{r bootstrap-smooths,include=FALSE}
+# Report the value of a prediction term as model's swept over a grid
+# Inputs: fitted model, variable name, a list of grids
+# Outputs: vector of prediction terms along the grid
+# Presumes: list of grids shares names with the terms in the model
+smooth.extractor <- function(mdl,var,grids) {
+      predict(mdl,newdata=grids[[var]],type="terms")[,var]
+}
+
+
+# Report the sum of selected terms as model's swept over a grid
+# Inputs: fitted model, vector of term names, a particular grid (not list)
+# Outputs: vector of summed prediction terms along the grid
+# Presumes: term names actually exist in the model
+sum.smooth.extractor <- function(mdl, terms, grid) {
+    all.terms <- predict(mdl, newdata=grid, type="terms")
+    our.terms <- all.terms[,terms]
+    return(rowSums(our.terms))
+}
+
+
+# Create a short list of grids for plotting
+year.grid <- data.frame(nonviol=0,viol.repress=0,sanctions=0,aid=0,support=0,
+                        defect=0,year=1900:2010,democracy=0,duration=100)
+duration.grid <- data.frame(nonviol=0,viol.repress=0,sanctions=0,aid=0,
+                            support=0,defect=0,year=1950,democracy=0,
+                            duration=10^seq(from=0,to=4.3,length.out=50))
+democracy.grid <- data.frame(nonviol=0,viol.repress=0,sanctions=0,aid=0,
+                             support=0,defect=0,year=1950,
+                             democracy=seq(from=-10,to=10,length.out=50),
+                             duration=100)
+# We'll also need a grid for the interaction of democracy and nonviolence
+democracy.nonviol.grid <- democracy.grid
+democracy.nonviol.grid$nonviol <- 1
+grids <- list(year.grid,duration.grid,democracy.grid,democracy.nonviol.grid)
+# Name the elements of the list to match the model terms
+names(grids) <- c("s(year)","s(log10(duration))","s(democracy)",
+                  "s(democracy):nonviol")
+
+# Check: do we get the right partial response function?
+  # This plot not included in the report --- run these lines manually
+plot(mdl.log,select=1,se=FALSE)   # What mgcv plots for the year
+points(year.grid$year, smooth.extractor(mdl.log,var="s(year)",grids=grids))
+# Success!
+```
+
+```{r smoothed-CIs,echo=FALSE}
+year.confband <- bootstrap.cis(rboot.mdls=boot.gams,
+                               extractor=smooth.extractor,
+                               main.mdl=mdl.log,
+                               level=0.95,
+                               var="s(year)",
+                               grids=grids)
+duration.confband <- bootstrap.cis(rboot.mdls=boot.gams,
+                                   extractor=smooth.extractor,
+                                   main.mdl=mdl.log,
+                                   level=0.95,
+                                   var="s(log10(duration))",
+                                   grids=grids)
+democracy.confband <- bootstrap.cis(rboot.mdls=boot.gams,
+                                    extractor=smooth.extractor,
+                                    main.mdl=mdl.log,
+                                    level=0.95,
+                                    var="s(democracy)",
+                                    grids=grids)
+democracy.nonviol.confband <- bootstrap.cis(rboot.mdls=boot.gams,
+                               extractor=smooth.extractor,
+                               main.mdl=mdl.log,
+                               level=0.95,
+                               var="s(democracy):nonviol",
+                               grids=grids)
+
+demonv.sum.confband <- bootstrap.cis(rboot.mdls=boot.gams,
+                                     extractor=sum.smooth.extractor,
+                                     main.mdl=mdl.log,
+                                     level=0.95,
+                                     terms=c("nonviol","s(democracy)",
+                                         "s(democracy):nonviol"),
+                                     grid=democracy.nonviol.grid)
+
+# Plotting function for confidence bands
+  # Designed to imitate the look of plot.gam()
+# Inputs: confidence band object (confband), name of the variable to plot
+  # against (var), name of the model term to plot (term), list of grids to take
+  # predictor values from (grid.list), data frame to take rug values from
+  # (data)
+# Output: NULL, invisibly
+# Presumes: confband is a list or data frame with components named est, lo and
+  # hi
+# Presumes: min() and max() work on confband
+# Presumes: variable and term names are all coordinated across grid.list, its
+  # grids, and the data
+plot.confband <- function(confband, var, term=paste("s(",var,")",sep=""),
+                          grid.list=grids, data=navc, ...) {
+    x <- grid.list[[term]][,var]
+    plot(x,y=confband$est, xlab=var, ylim=c(min(confband),max(confband)),
+         type="l",ylab=term,las=1,bty='n',...)
+    lines(x,y=confband$lo, lty="dashed")
+    lines(x,y=confband$hi, lty="dashed")
+    rug(data[,var],side=1)
+    invisible(NULL)
+}
+```
+
+```{r bootstrap-cis-figs,  echo=FALSE, fig.height=5, fig.width=5,fig.cap='Figure A1: Bootstrap confidence bands. The bottom figure is for the sum of democracy terms.'}
+par(mfrow=c(3,2), mar=c(5,3,0,0), las=1)
+plot.confband(year.confband,var="year")
+plot.confband(democracy.confband,var="democracy")
+plot.confband(democracy.nonviol.confband,term="s(democracy):nonviol",
+              var="democracy")
+plot.confband(duration.confband,grids,var="duration",term="s(log10(duration))",
+              log="x")
+plot.confband(demonv.sum.confband,term="s(democracy):nonviol",var="democracy")
+```
+
+
+## Choice of bootstrap 
+
+Because resampling of residuals works poorly when the
+response variable is binary, we basically have a choice of simulating from the
+fitted model, or resampling cases.  So as not to rest too strongly on the
+correctness of the model, I picked resampling of cases.  The confidence
+intervals derived from simulating the model are somewhat narrower than
+those from resampling, but not drastically so --- compare Tables
+1 and 2, and
+the source code for the alternative.
+
+
+
+```{r, echo=FALSE}
+# Alternative, model-based bootstrap
+
+# Create a new data frame with responses drawn at random from a fitted model
+# Inputs: model, data frame
+# Presumes: model's response is a binary probability
+# Presumes: data frame has columns for all required predictor variables
+sim.gam <- function(mdl, data=mdl$data) {
+    predicted.probs <- predict(mdl, newdata=data, type="response")
+    na.rows <- which(is.na(predicted.probs))
+    new.responses <- rbinom(n=length(predicted.probs)-length(na.rows), size=1,
+                            prob=predicted.probs[-na.rows])
+    response.name <- function(formula) { all.vars(formula)[1] }
+    data[-na.rows,response.name(formula(mdl))] <- new.responses
+    return(data)
+}
+```
+
+```{r, include=FALSE}
+# Create a big long list GAMs fit to simulated data
+  # simplify=FALSE to force replicate to return a list
+boot.gams.sim <- replicate(200, gam.estimator(sim.gam(mdl.log,navc)),
+                           simplify=FALSE)
+```
+
+```{r, include=FALSE}
+parametric.term.CIs.sim <- bootstrap.cis(rboot.mdls=boot.gams.sim,
+                                     extractor=param.extractor,
+                                     main.mdl=mdl.log,
+                                     level=0.95)
+year.confband.sim <- bootstrap.cis(rboot.mdls=boot.gams.sim,
+                               extractor=smooth.extractor,
+                               main.mdl=mdl.log,
+                               level=0.95,
+                               var="s(year)",
+                               grids=grids)
+duration.confband.sim <- bootstrap.cis(rboot.mdls=boot.gams.sim,
+                                   extractor=smooth.extractor,
+                                   main.mdl=mdl.log,
+                                   level=0.95,
+                                   var="s(log10(duration))",
+                                   grids=grids)
+democracy.confband.sim <- bootstrap.cis(rboot.mdls=boot.gams.sim,
+                                    extractor=smooth.extractor,
+                                    main.mdl=mdl.log,
+                                    level=0.95,
+                                    var="s(democracy)",
+                                    grids=grids)
+democracy.nonviol.confband.sim <- bootstrap.cis(rboot.mdls=boot.gams.sim,
+                               extractor=smooth.extractor,
+                               main.mdl=mdl.log,
+                               level=0.95,
+                               var="s(democracy):nonviol",
+                               grids=grids)
+demonv.sum.confband.sim <- bootstrap.cis(rboot.mdls=boot.gams.sim,
+                                     extractor=sum.smooth.extractor,
+                                     main.mdl=mdl.log,
+                                     level=0.95,
+                                     terms=c("nonviol","s(democracy)",
+                                         "s(democracy):nonviol"),
+                                     grid=democracy.nonviol.grid)
+
+```
+
+```{r parametric-terms-sim, echo=FALSE}
+kable(parametric.term.CIs,caption="Table 2: Point estimates and 95% confidence intervals for the model's parametric terms based on the model-based bootstrap replications.", digits=3)
+```
+
+```{r partial-response-cis-sim, echo=FALSE, fig.width=5, fig.height=4, fig.cap="Figure A2: Partial response functions, along with 95% confidence bands obtained by a model-based bootstrap.", eval=FALSE}
+par(mfrow=c(2,2),mar=c(5,3,0,0),bty='n',las=1)
+plot.confband(year.confband.sim,var="year")
+plot.confband(democracy.confband.sim,var="democracy")
+plot.confband(democracy.nonviol.confband.sim,term="s(democracy):nonviol",
+              var="democracy")
+plot.confband(duration.confband.sim,grids,var="duration",term="s(log10(duration))",
+              log="x")
+```
+
+
+
+
+
+## Details of bootstrapping
+
+While the resampling scheme is the same for both the parametric and
+non-parametric parts of the model, and we want confidence intervals for both,
+we need slightly different pieces of code for the coefficients on indicators
+and for the partial response functions.  When dealing with the coefficients, we
+treat them like any other set of parameters, e.g., the coefficients in a linear
+regression.  We can extract them from a fitted model with
+`summary()$p.coef`, or by taking the appropriately-named entries in the
+vector returned by `coefficients`.  On the other hand, the partial
+response functions are __functions__, curves, and we need to get confidence
+bands for them the way we got confidence bands for spline and kernel
+regressions, using `predict`.
+
+
+
+Because fitting a GAM is comparatively slow, it would be better not to have to
+do a completely separate set of resamplings and re-estimations for every term
+in the model.  The code thus modifies the example code from the notes and
+homework solutions to let different terms in the model share the same set of
+bootstrap samples.  This is, of course, beyond what you were expected to do.
+
+
+## Model checking: Classification and calibration
+
+The techniques, and the solution code, are lifted from chapter 11 and 12 lectures.
+
+It would have been ever better to check calibration in a cross-validatory
+way, but that would go beyond what was required here.
+
+## Model checking: Residuals
+
+With a binary response, the raw residuals must always be either $-p_i$ or
+$1-p_i$, and the Pearson residuals are similarly constrained.  The highly
+patterned look of the top-left plots in Figure 5
+is thus inevitable, however strange it may
+appear after working with ordinary regressions.
+
+Running a spline through the squared residuals goes back to the discussion of
+heteroskedasticity, and variance function estimation, in Chapter 7 of the
+notes.
+
+## Model checking: Comparing to another model
+
+The assignment called for using a GAM.  In the notes and homework, we looked at using
+a GAM to test whether a GLM is well-specified; we can't really turn that
+around.  Even if we had fit a GLM here, and then rejected it, that would just
+have said "the GAM isn't as bad as the GLM", not "the GAM is a good model".
+We could try embedding the GAM in a more general model, such as a kernel
+regression, or conditional kernel density estimate, or even just a GAM with a
+lot more interactions, and tested it along similar lines, however.
+
+## Model checking: What to do with a bad model?
+
+If any of the checks had detected severe problems with the model, the ideal
+course would have been to look into __why__ the model was bad, and come up
+with a new one which fixed those problems. The __report__ could have been
+written around the fixed-up model, with at most a brief mention of discarded
+predecessors.  If we couldn't find a tolerable model, then we'd have to say why
+even our best model wasn't acceptable; some of the ways we'd tried and failed
+to fix it; and how the model's problems might impair our ability to use its
+estimates to answer the analytical questions.
+
+## Variable selection
+
+The assignment did __not__ call for variable selection or an extensive search
+over models.  It was nonetheless legitimate to do such a search, provided one
+did so intelligently.  Deleting variables from a model because their
+coefficients or partial response functions are insignificant is __not__
+a reliable method (as you learned in 431).  With the model fit here, even
+though it has substantial predictive ability, __not one single term__
+is significant at the 5% level.  Cross-validation would work much better.
+
+It should hardly need repeating that "this variable's coefficient or response
+function was not statistically significant" does __not__ mean the same thing
+as "this variable does not matter for predicting the response".  A very wide confidence
+interval which overlaps with 0 means we __don't know__ whether or how much
+the variable matters.  It is only when the confidence interval contains zero
+__and__ is very small that we can be pretty sure the variable is unimportant.
+(For that matter, a tiny confidence interval which does not include zero, but
+is centered around a minute value, is also good reason to think that a variable
+doesn't matter very much.)
+
